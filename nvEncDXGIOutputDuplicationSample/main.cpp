@@ -31,6 +31,15 @@
 #include "Preproc.h"
 #include "NvEncoder/NvEncoderD3D11.h"
 
+#include <cuda.h>
+#include "NvDecoder/NvDecoder.h"
+#include "../Utils/NvCodecUtils.h"
+#include "../Utils/FFmpegDemuxer.h"
+#include "../Samples/AppDecode/AppDecD3D/FramePresenterD3D11.h"
+#include "../Samples/AppDecode/Common/AppDecUtils.h"
+
+simplelogger::Logger* logger = simplelogger::LoggerFactory::CreateConsoleLogger();
+
 class DemoApplication
 {
     /// Demo Application Core class
@@ -43,23 +52,30 @@ class DemoApplication
 
 private:
     /// DDA wrapper object, defined in DDAImpl.h
-    DDAImpl *pDDAWrapper = nullptr;
+    DDAImpl* pDDAWrapper = nullptr;
     /// PreProcesor for encoding. Defined in Preproc.h
     /// Preprocessingis required if captured images are of different size than encWidthxencHeight
     /// This application always uses this preprocessor
-    RGBToNV12 *pColorConv = nullptr;
+    RGBToNV12* pColorConv = nullptr;
     /// NVENCODE API wrapper. Defined in NvEncoderD3D11.h. This class is imported from NVIDIA Video SDK
-    NvEncoderD3D11 *pEnc = nullptr;
+    NvEncoderD3D11* pEnc = nullptr;
+    /// NVDECODE API warpper. Defined in NvDecoder.h. This class is imported from NVDIA Video SDK
+    NvDecoder* pDec = nullptr;
+    /// CUDA context defined in cuda.h
+    CUdevice cuDevice = 0;
+    CUcontext cuContext = NULL;
+    /// FFmpegDemuxer defined in FFmpegDemuxer.h
+    FFmpegDemuxer* demuxer = nullptr;
     /// D3D11 device context used for the operations demonstrated in this application
-    ID3D11Device *pD3DDev = nullptr;
+    ID3D11Device* pD3DDev = nullptr;
     /// D3D11 device context
-    ID3D11DeviceContext *pCtx = nullptr;
+    ID3D11DeviceContext* pCtx = nullptr;
     /// D3D11 RGB Texture2D object that recieves the captured image from DDA
-    ID3D11Texture2D *pDupTex2D = nullptr;
+    ID3D11Texture2D* pDupTex2D = nullptr;
     /// D3D11 YUV420 Texture2D object that sends the image to NVENC for video encoding
-    ID3D11Texture2D *pEncBuf = nullptr;
+    ID3D11Texture2D* pEncBuf = nullptr;
     /// Output video bitstream file handle
-    FILE *fp = nullptr;
+    FILE* fp = nullptr;
     /// Failure count from Capture API
     UINT failCount = 0;
     /// Video output dimensions
@@ -132,7 +148,7 @@ private:
     {
         if (!pEnc)
         {
-            DWORD w = bNoVPBlt ? pDDAWrapper->getWidth() : encWidth; 
+            DWORD w = bNoVPBlt ? pDDAWrapper->getWidth() : encWidth;
             DWORD h = bNoVPBlt ? pDDAWrapper->getHeight() : encHeight;
             NV_ENC_BUFFER_FORMAT fmt = bNoVPBlt ? NV_ENC_BUFFER_FORMAT_ARGB : NV_ENC_BUFFER_FORMAT_NV12;
             pEnc = new NvEncoderD3D11(pD3DDev, w, h, fmt);
@@ -162,7 +178,44 @@ private:
         }
         return S_OK;
     }
+    /// Initialize NVDECODEAPI wrapper
+    HRESULT InitDec()
+    {
+        const int iGpu = 0;
+        const int iD3d = 11;
+        if (!pDec)
+        {
+            try
+            {
+                ck(cuInit(0));
+                int nGpu = 0;
+                ck(cuDeviceGetCount(&nGpu));
+                ck(cuDeviceGet(&cuDevice, iGpu));
+                char szDeviceName[80];
+                ck(cuDeviceGetName(szDeviceName, sizeof(szDeviceName), cuDevice));
+                std::cout << "GPU in use: " << szDeviceName << std::endl;
+                ck(cuCtxCreate(&cuContext, CU_CTX_SCHED_BLOCKING_SYNC, cuDevice));
 
+                std::cout << "Display with D3D11." << std::endl;
+                char fname[64] = { 0 };
+                sprintf_s(fname, (const char*)fnameBase, 0);
+                CheckInputFile(fname);
+                demuxer = new FFmpegDemuxer(fname);
+                pDec = new NvDecoder(cuContext, demuxer->GetWidth(), demuxer->GetHeight(), true, FFmpeg2NvCodecId(demuxer->GetVideoCodec()));
+
+                if (!pDec)
+                {
+                    returnIfError(E_FAIL);
+                }
+            }
+            catch (const std::exception& ex)
+            {
+                std::cout << ex.what();
+                returnIfError(E_FAIL);
+            }
+        }
+        return S_OK;
+    }
     /// Initialize preprocessor
     HRESULT InitColorConv()
     {
@@ -181,7 +234,7 @@ private:
         if (!fp)
         {
             char fname[64] = { 0 };
-            sprintf_s(fname, (const char *)fnameBase, failCount);
+            sprintf_s(fname, (const char*)fnameBase, failCount);
             errno_t err = fopen_s(&fp, fname, "wb");
             returnIfError(err);
         }
@@ -193,7 +246,7 @@ private:
     {
         int nFrame = 0;
         nFrame = (int)vPacket.size();
-        for (std::vector<uint8_t> &packet : vPacket)
+        for (std::vector<uint8_t>& packet : vPacket)
         {
             fwrite(packet.data(), packet.size(), 1, fp);
         }
@@ -238,8 +291,8 @@ public:
     HRESULT Preproc()
     {
         HRESULT hr = S_OK;
-        const NvEncInputFrame *pEncInput = pEnc->GetNextInputFrame();
-        pEncBuf = (ID3D11Texture2D *)pEncInput->inputPtr;
+        const NvEncInputFrame* pEncInput = pEnc->GetNextInputFrame();
+        pEncBuf = (ID3D11Texture2D*)pEncInput->inputPtr;
         if (bNoVPBlt)
         {
             pCtx->CopySubresourceRegion(pEncBuf, D3D11CalcSubresource(0, 0, 1), 0, 0, 0, pDupTex2D, 0, NULL);
@@ -261,6 +314,8 @@ public:
         HRESULT hr = S_OK;
         try
         {
+            // 每次 encode 前都会把 vPacket 清空 vPacket.clear()
+            // 因此 WriteEncOutput() 一次只写当前编码的帧
             pEnc->EncodeFrame(vPacket);
             WriteEncOutput();
         }
@@ -271,7 +326,54 @@ public:
         SAFE_RELEASE(pEncBuf);
         return hr;
     }
+    /// Decode the stream
+    HRESULT Decode()
+    {
+        fclose(fp);
+        HRESULT hr = S_OK;
+        hr = InitDec();
+        returnIfError(hr);
+        try
+        {
+            FramePresenterD3D11 presenter(cuContext, demuxer->GetWidth(), demuxer->GetHeight());
+            CUdeviceptr dpFrame = 0;
+            ck(cuMemAlloc(&dpFrame, demuxer->GetWidth() * demuxer->GetHeight() * 4));
+            int nVideoBytes = 0, nFrameReturned = 0, nFrame = 0;
+            uint8_t* pVideo = NULL, ** ppFrame;
+            do
+            {
+                demuxer->Demux(&pVideo, &nVideoBytes);
+                pDec->Decode(pVideo, nVideoBytes, &ppFrame, &nFrameReturned);
+                if(!nFrame && nFrameReturned)
+                {
+                    LOG(INFO) << pDec->GetVideoInfo();
+                }
+                for(int i = 0;i<nFrameReturned;i++)
+                {
+	                if(pDec->GetBitDepth() == 8)
+	                {
+                        Nv12ToBgra32((uint8_t*)ppFrame[i], pDec->GetWidth(), (uint8_t*)dpFrame, 4 * pDec->GetWidth(), pDec->GetWidth(), pDec->GetHeight());
+	                }
+                    else
+                    {
+                        P016ToBgra32((uint8_t*)ppFrame[i], 2 * pDec->GetWidth(), (uint8_t*)dpFrame, 4 * pDec->GetWidth(), pDec->GetWidth(), pDec->GetHeight());
+                    }
 
+                    // D3D11 显示解码出来的帧
+                    presenter.PresentDeviceFrame((uint8_t*)dpFrame, demuxer->GetWidth() * 4);
+                }
+                nFrame += nFrameReturned;
+            } while (nVideoBytes);
+            ck(cuMemFree(dpFrame));
+            std::cout << "Total frame decoded: " << nFrame << std::endl;
+        }
+        catch (...)
+        {
+            hr = E_FAIL;
+        }
+        SAFE_RELEASE(pEncBuf);
+        return hr;
+    }
     /// Release all resources
     void Cleanup(bool bDelete = true)
     {
@@ -324,7 +426,7 @@ public:
     DemoApplication() {}
     ~DemoApplication()
     {
-        Cleanup(true); 
+        Cleanup(true);
     }
 };
 
@@ -366,7 +468,7 @@ int Grab60FPS(int nFrames)
         QueryPerformanceCounter(&start);
         /// Get a frame from DDA
         hr = Demo.Capture(wait);
-        if (hr == DXGI_ERROR_WAIT_TIMEOUT) 
+        if (hr == DXGI_ERROR_WAIT_TIMEOUT)
         {
             /// retry if there was no new update to the screen during our specific timeout interval
             /// reset our waiting time
@@ -394,7 +496,7 @@ int Grab60FPS(int nFrames)
             }
             RESET_WAIT_TIME(start, end, interval, freq);
             /// Preprocess for encoding
-            hr = Demo.Preproc(); 
+            hr = Demo.Preproc();
             if (FAILED(hr))
             {
                 printf("Preproc failed with error 0x%08x\n", hr);
@@ -409,7 +511,7 @@ int Grab60FPS(int nFrames)
             capturedFrames++;
         }
     } while (capturedFrames <= nFrames);
-
+    Demo.Decode();
     return 0;
 }
 
@@ -427,53 +529,53 @@ void printHelp()
 int main(int argc, char** argv)
 {
     /// The app will try to capture 60 times, by default
-    int nFrames = 60;
+    int nFrames = 300;
     int ret = 0;
     bool useNvenc = true;
 
-    /// Parse arguments
-    try
-    {
-        if (argc > 1)
-        {
-            for (int i = 0; i < argc; i++)
-            {
-                if (!strcmpi("-frames", argv[i]))
-                {
-                    nFrames = atoi(argv[i + 1]);
-                }
-                else if (!strcmpi("-frames", argv[i]))
-                {
-                    useNvenc = true;
-                }
-                else if ((!strcmpi("-help", argv[i])) ||
-                         (!strcmpi("-h", argv[i])) ||
-                         (!strcmpi("h", argv[i])) ||
-                         (!strcmpi("help", argv[i])) ||
-                         (!strcmpi("-usage", argv[i])) ||
-                         (!strcmpi("-about", argv[i])) ||
-                         (!strcmpi("-?", argv[i])) ||
-                         (!strcmpi("?", argv[i])) ||
-                         (!strcmpi("about", argv[i])) ||
-                         (!strcmpi("usage", argv[i]))
-                        )
-                {
-                    printHelp();
-                }
-            }
-        }
-        else
-        {
-            printHelp();
-            return 0;
-        }
-    }
-    catch (...)
-    {
-        printf(" DXGIOUTPUTDuplication_NVENC_Demo: Invalid arguments passed.\n\
-                                                   Continuing to grab 60 frames.\n");
-        printHelp();
-    }
+    /*   /// Parse arguments
+       try
+       {
+           if (argc > 1)
+           {
+               for (int i = 0; i < argc; i++)
+               {
+                   if (!strcmpi("-frames", argv[i]))
+                   {
+                       nFrames = atoi(argv[i + 1]);
+                   }
+                   else if (!strcmpi("-frames", argv[i]))
+                   {
+                       useNvenc = true;
+                   }
+                   else if ((!strcmpi("-help", argv[i])) ||
+                            (!strcmpi("-h", argv[i])) ||
+                            (!strcmpi("h", argv[i])) ||
+                            (!strcmpi("help", argv[i])) ||
+                            (!strcmpi("-usage", argv[i])) ||
+                            (!strcmpi("-about", argv[i])) ||
+                            (!strcmpi("-?", argv[i])) ||
+                            (!strcmpi("?", argv[i])) ||
+                            (!strcmpi("about", argv[i])) ||
+                            (!strcmpi("usage", argv[i]))
+                           )
+                   {
+                       printHelp();
+                   }
+               }
+           }
+           else
+           {
+               printHelp();
+               return 0;
+           }
+       }
+       catch (...)
+       {
+           printf(" DXGIOUTPUTDuplication_NVENC_Demo: Invalid arguments passed.\n\
+                                                      Continuing to grab 60 frames.\n");
+           printHelp();
+       }*/
     printf(" DXGIOUTPUTDuplication_NVENC_Demo: Frames to Capture: %d.\n", nFrames);
 
     /// Kick off the demo

@@ -19,6 +19,12 @@
     <Filter Include="Source Files\NVEnc">
       <UniqueIdentifier>{d39b399d-bddc-4e08-a63d-7dd40dea6cf8}</UniqueIdentifier>
     </Filter>
+    <Filter Include="Source Files\NVDec">
+      <UniqueIdentifier>{7cf82708-fe08-4fee-aad0-c8bf1b91fa3b}</UniqueIdentifier>
+    </Filter>
+    <Filter Include="Source Files\Utils">
+      <UniqueIdentifier>{6742b555-fba6-4a17-a4f3-3e995c64a6d2}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp">
@@ -35,6 +41,9 @@
     </ClCompile>
     <ClCompile Include="..\Samples\NvCodec\NvEncoder\NvEncoderD3D11.cpp">
       <Filter>Source Files\NVEnc</Filter>
+    </ClCompile>
+    <ClCompile Include="..\Samples\NvCodec\NvDecoder\NvDecoder.cpp">
+      <Filter>Source Files\NVDec</Filter>
     </ClCompile>
   </ItemGroup>
   <ItemGroup>
@@ -59,5 +68,16 @@
     <ClInclude Include="..\Samples\NvCodec\NvEncoder\NvEncoderD3D11.h">
       <Filter>Header Files\NVEnc</Filter>
     </ClInclude>
+  </ItemGroup>
+  <ItemGroup>
+    <CudaCompile Include="..\Samples\Utils\BitDepth.cu">
+      <Filter>Source Files\Utils</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\Samples\Utils\ColorSpace.cu">
+      <Filter>Source Files\Utils</Filter>
+    </CudaCompile>
+    <CudaCompile Include="..\Samples\Utils\Resize.cu">
+      <Filter>Source Files\Utils</Filter>
+    </CudaCompile>
   </ItemGroup>
 </Project>

@@ -8,9 +8,14 @@
 * is strictly prohibited.
 *
 */
-
+#ifndef __CUDACC__
+#define __CUDACC__
+#include "cuda_texture_types.h"
+#endif
 #include <cuda_runtime.h>
 #include "NvCodecUtils.h"
+#include <device_launch_parameters.h>
+
 
 template<typename YuvUnitx2>
 static __global__ void Resize(cudaTextureObject_t texY, cudaTextureObject_t texUv,

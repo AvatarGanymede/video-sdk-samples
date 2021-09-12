@@ -1,0 +1,10 @@
+﻿  NvEncoder.cpp
+D:\Github\video-sdk-samples\Samples\NvCodec\NvEncoder\nvEncodeAPI.h(637,1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失
+  NvEncoderD3D11.cpp
+D:\Github\video-sdk-samples\Samples\NvCodec\NvEncoder\nvEncodeAPI.h(637,1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失
+  DDAImpl.cpp
+  main.cpp
+D:\Github\video-sdk-samples\Samples\NvCodec\NvEncoder\nvEncodeAPI.h(637,1): warning C4819: 该文件包含不能在当前代码页(936)中表示的字符。请将该文件保存为 Unicode 格式以防止数据丢失
+  Preproc.cpp
+  正在生成代码...
+  nvEncDXGIOutputDuplicationSample.vcxproj -> D:\Github\video-sdk-samples\nvEncDXGIOutputDuplicationSample\x64\Debug\nvEncDXGIOutputDuplicationSample.exe

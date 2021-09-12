@@ -1,3 +1,7 @@
 
 *.opendb
 *.db
+nvEncDXGIOutputDuplicationSample/DDATest_0.h264
+*.ipch
+*.obj
+*.tlog

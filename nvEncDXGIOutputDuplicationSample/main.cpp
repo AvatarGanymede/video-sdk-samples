@@ -244,11 +244,14 @@ private:
     /// Write encoded video output to file
     void WriteEncOutput()
     {
-        int nFrame = 0;
-        nFrame = (int)vPacket.size();
-        for (std::vector<uint8_t>& packet : vPacket)
+        if (fp) 
         {
-            fwrite(packet.data(), packet.size(), 1, fp);
+            int nFrame = 0;
+            nFrame = (int)vPacket.size();
+            for (std::vector<uint8_t>& packet : vPacket)
+            {
+                fwrite(packet.data(), packet.size(), 1, fp);
+            }
         }
     }
 
@@ -314,7 +317,7 @@ public:
         HRESULT hr = S_OK;
         try
         {
-            // 每次 encode 前都会把 vPacket 清空 vPacket.clear()
+            // 每次 encode 前都会把 vPacket 清空. vPacket.clear()
             // 因此 WriteEncOutput() 一次只写当前编码的帧
             pEnc->EncodeFrame(vPacket);
             WriteEncOutput();
@@ -340,8 +343,24 @@ public:
             ck(cuMemAlloc(&dpFrame, demuxer->GetWidth() * demuxer->GetHeight() * 4));
             int nVideoBytes = 0, nFrameReturned = 0, nFrame = 0;
             uint8_t* pVideo = NULL, ** ppFrame;
+
+            const int WAIT_BASE = 17;
+            LARGE_INTEGER start = { 0 };
+            LARGE_INTEGER end = { 0 };
+            LARGE_INTEGER interval = { 0 };
+            LARGE_INTEGER freq = { 0 };
+            int wait = WAIT_BASE;
+            QueryPerformanceFrequency(&freq);
+            #ifndef RESET_WAIT_TIME
+			#define RESET_WAIT_TIME(start, end, interval, freq)         \
+			    QueryPerformanceCounter(&end);                          \
+			    interval.QuadPart = end.QuadPart - start.QuadPart;      \
+			    MICROSEC_TIME(interval, freq);                          \
+			    wait = (int)(WAIT_BASE - (interval.QuadPart / 1000));
+			#endif
             do
             {
+                QueryPerformanceCounter(&start);
                 demuxer->Demux(&pVideo, &nVideoBytes);
                 pDec->Decode(pVideo, nVideoBytes, &ppFrame, &nFrameReturned);
                 if(!nFrame && nFrameReturned)
@@ -350,6 +369,10 @@ public:
                 }
                 for(int i = 0;i<nFrameReturned;i++)
                 {
+                    if(i > 0)
+                    {
+                        QueryPerformanceCounter(&start);
+                    }
 	                if(pDec->GetBitDepth() == 8)
 	                {
                         Nv12ToBgra32((uint8_t*)ppFrame[i], pDec->GetWidth(), (uint8_t*)dpFrame, 4 * pDec->GetWidth(), pDec->GetWidth(), pDec->GetHeight());
@@ -358,9 +381,11 @@ public:
                     {
                         P016ToBgra32((uint8_t*)ppFrame[i], 2 * pDec->GetWidth(), (uint8_t*)dpFrame, 4 * pDec->GetWidth(), pDec->GetWidth(), pDec->GetHeight());
                     }
-
+                    RESET_WAIT_TIME(start, end, interval, freq);
+                    Sleep(wait);
                     // D3D11 显示解码出来的帧
                     presenter.PresentDeviceFrame((uint8_t*)dpFrame, demuxer->GetWidth() * 4);
+
                 }
                 nFrame += nFrameReturned;
             } while (nVideoBytes);
@@ -371,7 +396,6 @@ public:
         {
             hr = E_FAIL;
         }
-        SAFE_RELEASE(pEncBuf);
         return hr;
     }
     /// Release all resources
@@ -433,6 +457,7 @@ public:
 /// Demo 60 FPS (approx.) capture
 int Grab60FPS(int nFrames)
 {
+    /// WAIT_BASE = 17 意味着 1 秒 60 帧，1000 / 60 = 17 ms 
     const int WAIT_BASE = 17;
     DemoApplication Demo;
     HRESULT hr = S_OK;
@@ -443,6 +468,9 @@ int Grab60FPS(int nFrames)
     LARGE_INTEGER freq = { 0 };
     int wait = WAIT_BASE;
 
+    /// <summary>
+    /// 返回硬件支持的高精度计数器的频率。
+    /// </summary>
     QueryPerformanceFrequency(&freq);
 
     /// Reset waiting time for the next screen capture attempt
@@ -450,7 +478,7 @@ int Grab60FPS(int nFrames)
     QueryPerformanceCounter(&end);                          \
     interval.QuadPart = end.QuadPart - start.QuadPart;      \
     MICROSEC_TIME(interval, freq);                          \
-    wait = (int)(WAIT_BASE - (interval.QuadPart * 1000));
+    wait = (int)(WAIT_BASE - (interval.QuadPart / 1000));
 
     /// Initialize Demo app
     hr = Demo.Init();
@@ -466,7 +494,7 @@ int Grab60FPS(int nFrames)
         /// get start timestamp. 
         /// use this to adjust the waiting period in each capture attempt to approximately attempt 60 captures in a second
         QueryPerformanceCounter(&start);
-        /// Get a frame from DDA
+        /// Get a frame from DDA, write into pDupTex2D
         hr = Demo.Capture(wait);
         if (hr == DXGI_ERROR_WAIT_TIMEOUT)
         {
@@ -495,7 +523,7 @@ int Grab60FPS(int nFrames)
                 Demo.Capture(wait);
             }
             RESET_WAIT_TIME(start, end, interval, freq);
-            /// Preprocess for encoding
+            /// Preprocess for encoding, copy from pDupTex2D to Encoder buffer and release pDupTex2D
             hr = Demo.Preproc();
             if (FAILED(hr))
             {
@@ -532,50 +560,6 @@ int main(int argc, char** argv)
     int nFrames = 300;
     int ret = 0;
     bool useNvenc = true;
-
-    /*   /// Parse arguments
-       try
-       {
-           if (argc > 1)
-           {
-               for (int i = 0; i < argc; i++)
-               {
-                   if (!strcmpi("-frames", argv[i]))
-                   {
-                       nFrames = atoi(argv[i + 1]);
-                   }
-                   else if (!strcmpi("-frames", argv[i]))
-                   {
-                       useNvenc = true;
-                   }
-                   else if ((!strcmpi("-help", argv[i])) ||
-                            (!strcmpi("-h", argv[i])) ||
-                            (!strcmpi("h", argv[i])) ||
-                            (!strcmpi("help", argv[i])) ||
-                            (!strcmpi("-usage", argv[i])) ||
-                            (!strcmpi("-about", argv[i])) ||
-                            (!strcmpi("-?", argv[i])) ||
-                            (!strcmpi("?", argv[i])) ||
-                            (!strcmpi("about", argv[i])) ||
-                            (!strcmpi("usage", argv[i]))
-                           )
-                   {
-                       printHelp();
-                   }
-               }
-           }
-           else
-           {
-               printHelp();
-               return 0;
-           }
-       }
-       catch (...)
-       {
-           printf(" DXGIOUTPUTDuplication_NVENC_Demo: Invalid arguments passed.\n\
-                                                      Continuing to grab 60 frames.\n");
-           printHelp();
-       }*/
     printf(" DXGIOUTPUTDuplication_NVENC_Demo: Frames to Capture: %d.\n", nFrames);
 
     /// Kick off the demo

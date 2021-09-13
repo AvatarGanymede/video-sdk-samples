@@ -40,6 +40,24 @@
 
 simplelogger::Logger* logger = simplelogger::LoggerFactory::CreateConsoleLogger();
 
+//class MemDataProvider : public FFmpegDemuxer::DataProvider {
+//public:
+//    MemDataProvider(std::vector<uint8_t> inPacket) {
+//        packet = inPacket;
+//    }
+//    ~MemDataProvider() {
+//        fpIn.close();
+//    }
+//    // Fill in the buffer owned by the demuxer/decoder
+//    int GetData(uint8_t* pBuf, int nBuf) {
+//        // We read a file for this example. You may get your data from network or somewhere else
+//        return (int)fpIn.read(reinterpret_cast<char*>(pBuf), nBuf).gcount();
+//    }
+//
+//private:
+//    std::vector<uint8_t> packet;
+//};
+
 class DemoApplication
 {
     /// Demo Application Core class
